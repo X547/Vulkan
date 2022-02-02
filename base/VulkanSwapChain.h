@@ -23,6 +23,24 @@
 #include "VulkanAndroid.h"
 #endif
 
+#ifdef __HAIKU__
+
+class BBitmap;
+
+class BitmapHook {
+public:
+	virtual ~BitmapHook() {};
+	virtual void GetSize(uint32_t &width, uint32_t &height) = 0;
+	virtual BBitmap *SetBitmap(BBitmap *bmp) = 0;
+};
+
+class VKWineSurfaceBase {
+public:
+	virtual ~VKWineSurfaceBase() {};
+	virtual void SetBitmapHook(BitmapHook *hook) = 0;
+};
+#endif
+
 typedef struct _SwapChainBuffers {
 	VkImage image;
 	VkImageView view;
@@ -66,6 +84,8 @@ public:
 	void initSurface(xcb_connection_t* connection, xcb_window_t window);
 #elif (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
 	void initSurface(void* view);
+#elif defined(__HAIKU__)
+	void initSurface(uint32_t width, uint32_t height, BitmapHook* hook);
 #elif (defined(_DIRECT2DISPLAY) || defined(VK_USE_PLATFORM_HEADLESS_EXT))
 	void initSurface(uint32_t width, uint32_t height);
 #if defined(_DIRECT2DISPLAY)

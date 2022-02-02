@@ -72,6 +72,75 @@
 #include "camera.hpp"
 #include "benchmark.hpp"
 
+#ifdef __HAIKU__
+
+#include <Application.h>
+#include <Window.h>
+#include <View.h>
+#include <OS.h>
+#include <private/shared/AutoDeleter.h>
+#include <pthread.h>
+
+class VulkanExampleView;
+
+class VulkanExampleApplication: public BApplication {
+public:
+	VulkanExampleApplication();
+};
+
+class VulkanExampleWindow: public BWindow {
+private:
+	VulkanExampleView *fView;
+
+public:
+	VulkanExampleWindow(BRect frame, const char *title);
+
+	bool QuitRequested() override;
+
+	inline VulkanExampleView *GetView();
+};
+
+class VulkanExampleView: public BView {
+private:
+	class ViewBitmapHook: public BitmapHook {
+	private:
+		VulkanExampleView *fView;
+	public:
+		ViewBitmapHook(VulkanExampleView *view);
+		virtual ~ViewBitmapHook() {};
+		void GetSize(uint32_t &width, uint32_t &height) override;
+		BBitmap *SetBitmap(BBitmap *bmp) override;
+	};
+
+	ObjectDeleter<BBitmap> fBmp;
+	ViewBitmapHook fHook;
+
+public:
+	VulkanExampleView(BRect frame, const char *name);
+
+	void Draw(BRect dirty);
+
+	void KeyDown(const char* bytes, int32 numBytes) override;
+	void KeyUp(const char* bytes, int32 numBytes) override;
+	void MouseDown(BPoint where) override;
+	void MouseUp(BPoint where) override;
+	void MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage) override;
+	
+	inline BitmapHook *GetBitmapHook();
+};
+
+VulkanExampleView *VulkanExampleWindow::GetView()
+{
+	return fView;
+}
+
+BitmapHook *VulkanExampleView::GetBitmapHook()
+{
+	return &fHook;
+}
+
+#endif // __HAIKU__
+
 class CommandLineParser
 {
 public:
@@ -112,6 +181,21 @@ private:
 	void createCommandBuffers();
 	void destroyCommandBuffers();
 	std::string shaderDir = "glsl";
+#if defined(__HAIKU__)
+	friend class VulkanExampleApplication;
+	friend class VulkanExampleWindow;
+	friend class VulkanExampleView;
+	pthread_mutex_t mutex = PTHREAD_RECURSIVE_MUTEX_INITIALIZER;
+	pthread_cond_t quitCond = PTHREAD_COND_INITIALIZER;
+	struct {
+		uint32_t keys[256/32];
+		struct {
+			int32_t x;
+			int32_t y;
+			uint32_t btns;
+		} mouse;
+	} inputState{}, oldInputState{};
+#endif
 protected:
 	// Returns the path to the root of the glsl or hlsl shader directory.
 	std::string getShadersPath() const;
@@ -283,6 +367,9 @@ public:
 	xcb_screen_t *screen;
 	xcb_window_t window;
 	xcb_intern_atom_reply_t *atom_wm_delete_window;
+#elif defined(__HAIKU__)
+	VulkanExampleWindow *window;
+	bool quit = false;
 #elif defined(VK_USE_PLATFORM_HEADLESS_EXT)
 	bool quit = false;
 #endif
@@ -358,6 +445,9 @@ public:
 	xcb_window_t setupWindow();
 	void initxcbConnection();
 	void handleEvent(const xcb_generic_event_t *event);
+#elif defined(__HAIKU__)
+	void setupWindow();
+	void handleEvent();
 #else
 	void setupWindow();
 #endif

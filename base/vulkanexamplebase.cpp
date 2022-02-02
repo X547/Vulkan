@@ -15,6 +15,149 @@
 #include <CoreVideo/CVDisplayLink.h>
 #endif
 
+#if defined(__HAIKU__)
+
+#include <Region.h>
+#include <Bitmap.h>
+
+extern VulkanExampleBase *vulkanExample;
+
+
+VulkanExampleApplication::VulkanExampleApplication():
+	BApplication("application/x-vnd.test.app")
+{}
+
+
+VulkanExampleWindow::VulkanExampleWindow(BRect frame, const char *title):
+	BWindow(frame, title, B_TITLED_WINDOW, B_ASYNCHRONOUS_CONTROLS | B_QUIT_ON_WINDOW_CLOSE)
+{
+	fView = new VulkanExampleView(Frame().OffsetToCopy(B_ORIGIN), "view");
+	AddChild(fView, NULL);
+	fView->MakeFocus();
+}
+
+bool VulkanExampleWindow::QuitRequested()
+{
+	Unlock();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	vulkanExample->quit = true;
+	pthread_cond_wait(&vulkanExample->quitCond, &vulkanExample->mutex);
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	Lock();
+	return BWindow::QuitRequested();
+}
+
+
+VulkanExampleView::ViewBitmapHook::ViewBitmapHook(VulkanExampleView *view):
+	fView(view)
+{
+}
+
+void VulkanExampleView::ViewBitmapHook::GetSize(uint32_t &width, uint32_t &height)
+{
+	fView->LockLooper();
+	width = (uint32_t)fView->Frame().Width() + 1;
+	height = (uint32_t)fView->Frame().Height() + 1;
+	fView->UnlockLooper();
+}
+
+BBitmap *VulkanExampleView::ViewBitmapHook::SetBitmap(BBitmap *bmp)
+{
+	fView->LockLooper();
+
+	BBitmap* oldBmp = fView->fBmp.Detach();
+	fView->fBmp.SetTo(bmp);
+	fView->Invalidate();
+
+	fView->UnlockLooper();
+	return oldBmp;
+}
+
+VulkanExampleView::VulkanExampleView(BRect frame, const char *name):
+	BView(frame, name, B_FOLLOW_ALL, B_WILL_DRAW),
+	fHook(this)
+{
+	SetViewColor(B_TRANSPARENT_COLOR);
+	SetLowColor(0, 0, 0);
+}
+
+void VulkanExampleView::Draw(BRect dirty)
+{
+	BRegion region(dirty);
+	if (fBmp.IsSet()) {
+		DrawBitmap(fBmp.Get(), B_ORIGIN);
+		region.Exclude(fBmp->Bounds());
+	}
+	FillRegion(&region, B_SOLID_LOW);
+}
+
+void VulkanExampleView::KeyDown(const char* bytes, int32 numBytes)
+{
+	BMessage *msg = Window()->CurrentMessage();
+	int32 key;
+	if (msg->FindInt32("key", &key) < B_OK) return;
+	UnlockLooper();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	if (key >= 0 && key < 256)
+		vulkanExample->inputState.keys[key/32] |= 1 << (key % 32);
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	LockLooper();
+}
+
+void VulkanExampleView::KeyUp(const char* bytes, int32 numBytes)
+{
+	BMessage *msg = Window()->CurrentMessage();
+	int32 key;
+	if (msg->FindInt32("key", &key) < B_OK) return;
+	UnlockLooper();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	if (key >= 0 && key < 256)
+		vulkanExample->inputState.keys[key/32] &= ~(1 << (key % 32));
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	LockLooper();
+}
+
+void VulkanExampleView::MouseDown(BPoint where)
+{
+	SetMouseEventMask(B_POINTER_EVENTS);
+	BMessage *msg = Window()->CurrentMessage();
+	uint32 btns;
+	UnlockLooper();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	vulkanExample->inputState.mouse.x = (int32_t)where.x;
+	vulkanExample->inputState.mouse.y = (int32_t)where.y;
+	if (msg->FindInt32("buttons", (int32*)&btns) >= B_OK) {
+		vulkanExample->inputState.mouse.btns = btns;
+	}
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	LockLooper();
+}
+
+void VulkanExampleView::MouseUp(BPoint where)
+{
+	BMessage *msg = Window()->CurrentMessage();
+	uint32 btns;
+	UnlockLooper();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	if (msg->FindInt32("buttons", (int32*)&btns) >= B_OK) {
+		vulkanExample->inputState.mouse.btns = btns;
+	}
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	LockLooper();
+}
+
+void VulkanExampleView::MouseMoved(BPoint where, uint32 code, const BMessage* dragMessage)
+{
+	UnlockLooper();
+	pthread_mutex_lock(&vulkanExample->mutex);
+	vulkanExample->inputState.mouse.x = (int32_t)where.x;
+	vulkanExample->inputState.mouse.y = (int32_t)where.y;
+	pthread_mutex_unlock(&vulkanExample->mutex);
+	LockLooper();
+}
+
+#endif
+
 std::vector<const char*> VulkanExampleBase::args;
 
 VkResult VulkanExampleBase::createInstance(bool enableValidation)
@@ -595,6 +738,9 @@ void VulkanExampleBase::renderLoop()
 			viewUpdated = false;
 			viewChanged();
 		}
+#ifdef __HAIKU__
+		handleEvent();
+#endif
 		render();
 		frameCounter++;
 		auto tEnd = std::chrono::high_resolution_clock::now();
@@ -620,6 +766,9 @@ void VulkanExampleBase::renderLoop()
 		}
 		updateOverlay();
 	}
+#ifdef __HAIKU__
+	pthread_cond_signal(&quitCond);
+#endif
 #elif (defined(VK_USE_PLATFORM_MACOS_MVK) && defined(VK_EXAMPLE_XCODE_GENERATED))
 	[NSApp run];
 #endif
@@ -2473,6 +2622,96 @@ void VulkanExampleBase::handleEvent(const xcb_generic_event_t *event)
 		break;
 	}
 }
+#elif defined(__HAIKU__)
+void VulkanExampleBase::setupWindow()
+{
+	new VulkanExampleApplication();
+	be_app->Unlock();
+	thread_id appThread = spawn_thread([](void *arg) {
+		be_app->Lock();
+		be_app->Run();
+		return B_OK;
+	}, "application", B_NORMAL_PRIORITY, NULL);
+	resume_thread(appThread);
+
+	window = new VulkanExampleWindow(BRect(0, 0, width - 1, height - 1), getWindowTitle().c_str());
+	window->CenterOnScreen();
+	window->Show();
+}
+
+void VulkanExampleBase::handleEvent()
+{
+	pthread_mutex_lock(&vulkanExample->mutex);
+	for (uint32_t key = 0; key < 256; key++) {
+		if ((inputState.keys[key/32] ^ oldInputState.keys[key/32]) & (1 << (key % 32))) {
+			if (inputState.keys[key/32] & (1 << (key % 32))) {
+				// key pressed
+				switch (key)
+				{
+				case KEY_P:
+					paused = !paused;
+					break;
+				case KEY_F1:
+					if (settings.overlay) {
+						UIOverlay.visible = !UIOverlay.visible;
+					}
+					break;
+				case KEY_ESCAPE:
+					be_app->PostMessage(B_QUIT_REQUESTED);
+					break;
+				}
+
+				if (camera.type == Camera::firstperson)
+				{
+					switch (key)
+					{
+					case KEY_W:
+						camera.keys.up = true;
+						break;
+					case KEY_S:
+						camera.keys.down = true;
+						break;
+					case KEY_A:
+						camera.keys.left = true;
+						break;
+					case KEY_D:
+						camera.keys.right = true;
+						break;
+					}
+				}
+			} else {
+				// key released
+				if (camera.type == Camera::firstperson)
+				{
+					switch (key)
+					{
+					case KEY_W:
+						camera.keys.up = false;
+						break;
+					case KEY_S:
+						camera.keys.down = false;
+						break;
+					case KEY_A:
+						camera.keys.left = false;
+						break;
+					case KEY_D:
+						camera.keys.right = false;
+						break;
+					}
+				}				
+			}
+		}
+	}
+	mouseButtons.left = (1 << 0) & inputState.mouse.btns;
+	mouseButtons.right = (1 << 1) & inputState.mouse.btns;
+	mouseButtons.middle = (1 << 2) & inputState.mouse.btns;
+	if (inputState.mouse.x != oldInputState.mouse.x || inputState.mouse.y != oldInputState.mouse.y)
+		handleMouseMove(inputState.mouse.x, inputState.mouse.y);
+
+	oldInputState = inputState;
+	pthread_mutex_unlock(&vulkanExample->mutex);
+}
+
 #else
 void VulkanExampleBase::setupWindow()
 {
@@ -2748,6 +2987,8 @@ void VulkanExampleBase::initSwapchain()
 	swapChain.initSurface(display, surface);
 #elif defined(VK_USE_PLATFORM_XCB_KHR)
 	swapChain.initSurface(connection, window);
+#elif defined(__HAIKU__)
+	swapChain.initSurface(width, height, window->GetView()->GetBitmapHook());
 #elif (defined(_DIRECT2DISPLAY) || defined(VK_USE_PLATFORM_HEADLESS_EXT))
 	swapChain.initSurface(width, height);
 #endif

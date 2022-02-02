@@ -137,4 +137,27 @@
 #define KEY_N 0x39
 #define KEY_O 0x20
 #define KEY_T 0x1C
+
+#elif defined(__HAIKU__)
+//#include <InterfaceDefs.h>
+#define KEY_ESCAPE 0x01 
+#define KEY_F1 0x02
+#define KEY_F2 0x03
+#define KEY_F3 0x04
+#define KEY_F4 0x05
+#define KEY_F5 0x06
+#define KEY_W 0x28
+#define KEY_A 0x3c
+#define KEY_S 0x3d
+#define KEY_D 0x3e
+#define KEY_P 0x30
+#define KEY_SPACE 0x5e
+#define KEY_KPADD 0x3a
+#define KEY_KPSUB 0x25
+#define KEY_B 0x50
+#define KEY_F 0x3f
+#define KEY_L 0x44
+#define KEY_N 0x51
+#define KEY_O 0x2f
+#define KEY_T 0x2b
 #endif

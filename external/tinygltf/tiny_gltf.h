@@ -1567,7 +1567,7 @@ class TinyGLTF {
 
 #endif
 
-#elif !defined(__ANDROID__)
+#elif !defined(__ANDROID__) && !defined(__HAIKU__)
 #include <wordexp.h>
 #endif
 
@@ -2544,7 +2544,7 @@ std::string ExpandFilePath(const std::string &filepath, void *) {
 #else
 
 #if defined(TARGET_OS_IPHONE) || defined(TARGET_IPHONE_SIMULATOR) || \
-    defined(__ANDROID__) || defined(__EMSCRIPTEN__)
+    defined(__ANDROID__) || defined(__EMSCRIPTEN__) || defined(__HAIKU__)
   // no expansion
   std::string s = filepath;
 #else

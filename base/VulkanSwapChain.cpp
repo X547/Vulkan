@@ -23,6 +23,8 @@ void VulkanSwapChain::initSurface(wl_display *display, wl_surface *window)
 void VulkanSwapChain::initSurface(xcb_connection_t* connection, xcb_window_t window)
 #elif (defined(VK_USE_PLATFORM_IOS_MVK) || defined(VK_USE_PLATFORM_MACOS_MVK))
 void VulkanSwapChain::initSurface(void* view)
+#elif defined(__HAIKU__)
+void VulkanSwapChain::initSurface(uint32_t width, uint32_t height, BitmapHook* hook)
 #elif (defined(_DIRECT2DISPLAY) || defined(VK_USE_PLATFORM_HEADLESS_EXT))
 void VulkanSwapChain::initSurface(uint32_t width, uint32_t height)
 #endif
@@ -88,6 +90,10 @@ void VulkanSwapChain::initSurface(uint32_t width, uint32_t height)
 	if (err != VK_SUCCESS) {
 		vks::tools::exitFatal("Could not create surface!", err);
 	}
+
+#ifdef __HAIKU__
+	((VKWineSurfaceBase*)surface)->SetBitmapHook(hook);
+#endif
 
 	// Get available queue family properties
 	uint32_t queueCount;
